@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>مخطط الأراضي - النسخة المعتمدة</title>
+    <style>
+        * { touch-action: none; -webkit-tap-highlight-color: transparent; user-select: none; box-sizing: border-box; }
+        body { font-family: -apple-system, sans-serif; background: #f1f5f9; margin: 0; display: flex; flex-direction: column; align-items: center; width: 100vw; height: 100vh; overflow: hidden; position: fixed; }
+        .app-wrapper { width: 100%; max-width: 450px; padding: 10px; display: flex; flex-direction: column; height: 100%; }
+        .canvas-card { background: white; padding: 5px; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); margin-bottom: 10px; position: relative; flex-grow: 1; }
+        #canvasContainer { width: 100%; height: 100%; background: #fff; border: 1px solid #cbd5e1; border-radius: 12px; overflow: hidden; position: relative; }
+        canvas { display: block; width: 100%; height: 100%; }
+        .zoom-controls { position: absolute; top: 10px; right: 10px; display: flex; flex-direction: column; gap: 8px; z-index: 10; }
+        .ctrl-btn { width: 42px; height: 42px; background: white; border: 1px solid #3b82f6; border-radius: 8px; font-size: 20px; color: #3b82f6; font-weight: bold; }
+        .control-panel { background: white; padding: 15px; border-radius: 20px; box-shadow: 0 -5px 15px rgba(0,0,0,0.05); display: flex; flex-direction: column; gap: 10px; }
+        .input-row { display: flex; gap: 10px; }
+        .group { flex: 1; display: flex; flex-direction: column; gap: 4px; }
+        label { font-size: 11px; font-weight: bold; color: #64748b; }
+        select { padding: 12px; border-radius: 10px; border: 1px solid #e2e8f0; background: #f8fafc; font-size: 14px; text-align: center; -webkit-appearance: none; }
+        .actions-row { display: flex; gap: 10px; }
+        .btn { border: none; padding: 14px; border-radius: 10px; font-weight: bold; flex: 1; color: white; display: flex; align-items: center; justify-content: center; }
+        .btn-green { background: #10b981; } .btn-red { background: #ef4444; } .btn-gray { background: #64748b; } .btn-light { background: #f1f5f9; color: #475569; }
+    </style>
+</head>
+<body>
+<div class="app-wrapper">
+    <div class="canvas-card">
+        <div class="zoom-controls">
+            <button class="ctrl-btn" onclick="adjustZoom(1.2)">+</button>
+            <button class="ctrl-btn" onclick="adjustZoom(0.8)">-</button>
+        </div>
+        <div id="canvasContainer"><canvas id="canvas"></canvas></div>
+    </div>
+    <div class="control-panel">
+        <div class="input-row">
+            <div class="group"><label>طول الضلع</label><select id="meterSelect"><option value="0.5">0.5 م</option><option value="1" selected>1 م</option><option value="2">2 م</option><option value="5">5 م</option><option value="10">10 م</option></select></div>
+            <div class="group"><label>الاتجاه</label><select id="dir"><option value="RIGHT">يمين →</option><option value="LEFT">يسار ←</option><option value="DOWN">أسفل ↓</option><option value="UP">أعلى ↑</option></select></div>
+        </div>
+        <div class="actions-row"><button class="btn btn-green" onclick="addWall()">إضافة جدار</button><button class="btn btn-red" onclick="smartDelete()">حذف الضلع</button></div>
+        <div class="actions-row"><button class="btn btn-gray" onclick="undo()">تراجع ⤺</button><button class="btn btn-light" onclick="resetAll()">مسح الكل</button></div>
+    </div>
+</div>
+<script>
+    const canvas = document.getElementById('canvas'); const ctx = canvas.getContext('2d');
+    const container = document.getElementById('canvasContainer');
+    const gridSize = 30; let walls = []; let startPos = { x: 0, y: 0 }; 
+    let camera = { x: 0, y: 0, zoom: 1 }; let isDragging = false; 
+    let lastMousePos = { x: 0, y: 0 }; let dragDistance = 0;
+    function init() { resizeCanvas(); camera.x = canvas.width/2; camera.y = canvas.height/2; draw(); }
+    function resizeCanvas() { canvas.width = container.clientWidth; canvas.height = container.clientHeight; draw(); }
+    function adjustZoom(f) { camera.zoom = Math.max(0.2, Math.min(camera.zoom * f, 5)); draw(); }
+    function worldToScreen(x, y) { return { x: (x * camera.zoom) + camera.x, y: (y * camera.zoom) + camera.y }; }
+    function screenToWorld(x, y) { return { x: (x - camera.x) / camera.zoom, y: (y - camera.y) / camera.zoom }; }
+    canvas.addEventListener('pointerdown', (e) => { isDragging = true; dragDistance = 0; lastMousePos = { x: e.clientX, y: e.clientY }; canvas.setPointerCapture(e.pointerId); });
+    canvas.addEventListener('pointermove', (e) => { if (!isDragging) return; const dx = e.clientX - lastMousePos.x; const dy = e.clientY - lastMousePos.y; camera.x += dx; camera.y += dy; dragDistance += Math.abs(dx) + Math.abs(dy); lastMousePos = { x: e.clientX, y: e.clientY }; draw(); });
+    canvas.addEventListener('pointerup', (e) => { isDragging = false; if (dragDistance < 10) { const rect = canvas.getBoundingClientRect(); const worldPos = screenToWorld(e.clientX - rect.left, e.clientY - rect.top); startPos.x = Math.round(worldPos.x / gridSize) * gridSize; startPos.y = Math.round(worldPos.y / gridSize) * gridSize; } draw(); });
+    function addWall() {
+        const d = document.getElementById('dir').value; const l = parseFloat(document.getElementById('meterSelect').value);
+        const move = l * gridSize; let n = { ...startPos };
+        if (d === "RIGHT") n.x += move; else if (d === "LEFT") n.x -= move; else if (d === "DOWN") n.y += move; else if (d === "UP") n.y -= move;
+        const rev = walls.findIndex(w => (Math.abs(w.x1-n.x)<1 && Math.abs(w.y1-n.y)<1 && Math.abs(w.x2-startPos.x)<1 && Math.abs(w.y2-startPos.y)<1));
+        if (rev !== -1) { walls.splice(rev, 1); } else { walls.push({ x1: startPos.x, y1: startPos.y, x2: n.x, y2: n.y, dir: d, len: l }); }
+        startPos = n; draw();
+    }
+    function smartDelete() { const idx = walls.findLastIndex(w => (Math.abs(w.x2 - startPos.x) < 1 && Math.abs(w.y2 - startPos.y) < 1) || (Math.abs(w.x1 - startPos.x) < 1 && Math.abs(w.y1 - startPos.y) < 1)); if (idx !== -1) { const w = walls[idx]; startPos = (Math.abs(w.x2 - startPos.x) < 1 && Math.abs(w.y2 - startPos.y) < 1) ? { x: w.x1, y: w.y1 } : { x: w.x2, y: w.y2 }; walls.splice(idx, 1); draw(); } }
+    function undo() { smartDelete(); }
+    function resetAll() { if(confirm("مسح الكل؟")) { walls = []; startPos = {x:0, y:0}; draw(); } }
+    function draw() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        const lw = screenToWorld(0, 0).x; const rw = screenToWorld(canvas.width, 0).x;
+        const tw = screenToWorld(0, 0).y; const bw = screenToWorld(0, canvas.height).y;
+        ctx.beginPath(); ctx.strokeStyle = "#e2e8f0"; ctx.lineWidth = 1;
+        for (let x = Math.floor(lw/gridSize)*gridSize; x <= rw; x += gridSize) { const sx = worldToScreen(x,0).x; ctx.moveTo(sx, 0); ctx.lineTo(sx, canvas.height); }
+        for (let y = Math.floor(tw/gridSize)*gridSize; y <= bw; y += gridSize) { const sy = worldToScreen(0,y).y; ctx.moveTo(0, sy); ctx.lineTo(canvas.width, sy); }
+        ctx.stroke();
+        let disp = []; let temp = JSON.parse(JSON.stringify(walls));
+        while(temp.length > 0) {
+            let c = temp.shift(); let m = true;
+            while(m) { m = false; for(let i=0; i<temp.length; i++) { let n = temp[i]; if(c.dir === n.dir && Math.abs(c.x2-n.x1)<1 && Math.abs(c.y2-n.y1)<1) { c.len += n.len; c.x2 = n.x2; c.y2 = n.y2; temp.splice(i, 1); m = true; break; } } }
+            disp.push(c);
+        }
+        disp.forEach(s => {
+            const p1 = worldToScreen(s.x1, s.y1); const p2 = worldToScreen(s.x2, s.y2);
+            ctx.beginPath(); ctx.lineWidth = 4 * camera.zoom; ctx.strokeStyle = "#1e293b"; ctx.lineCap = "round";
+            ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.stroke();
+            ctx.fillStyle = "#2563eb"; ctx.font = `bold ${14 * Math.max(camera.zoom, 0.7)}px Arial`;
+            const mx = (p1.x + p2.x)/2; const my = (p1.y + p2.y)/2; let off = 15 * camera.zoom;
+            if (s.dir === "UP" || s.dir === "DOWN") { ctx.textAlign="right"; ctx.fillText(Math.round(s.len*10)/10+"م", mx-off, my); }
+            else { ctx.textAlign="center"; ctx.textBaseline="bottom"; ctx.fillText(Math.round(s.len*10)/10+"م", mx, my-off); }
+        });
+        const dot = worldToScreen(startPos.x, startPos.y); ctx.beginPath(); ctx.arc(dot.x, dot.y, 8*camera.zoom, 0, Math.PI*2); ctx.fillStyle="#ef4444"; ctx.fill(); ctx.strokeStyle="white"; ctx.lineWidth=2; ctx.stroke();
+    }
+    window.onload = init; window.onresize = resizeCanvas;
+</script>
+</body>
+</html>
